@@ -34,6 +34,67 @@ function validateRefBranch(value) {
     return value;
 }
 
+
+/**
+ * Calls GitHub API with the args.
+ * @param {String} api the API string to call. It will be prepended with
+ * the base path to the general API entry point.
+ * @param {Object} args a JSON-like JS object whose properties are arguments
+ * to the API.
+ */
+function gitHub(method, api, args, onOk, onError) {
+
+            var options = {
+                    host: 'github.com',
+                    port: 443,
+                    path: '/api/v2/json' + api,
+                    method: method
+                },
+                needsBody = method === 'POST' || method === 'PUT',
+                queryString = args && url.format(url.format({
+                    query: args
+                })).replace(/^\?/, '');
+
+            if (args && !needsBody) {
+                options.path += '?' + queryString;
+            }
+
+            httpsReq = https.request(options, function (httpsRes) {
+                var postResponse = '';
+
+                httpsRes.on('data', function (data) {
+                    postResponse += data;
+                });
+
+                httpsRes.on('end', function () {
+                    var parsedResponse = url.parse('/bogus.html?' + postResponse.trim(), true);
+                    config.accessToken = parsedResponse.query.access_token;
+                    fs.writeFileSync(configPath, JSON.stringify(config, null, '  '), 'utf8');
+                    server.close();
+                    route();
+                });
+
+                httpsRes.on('error', function (error) {
+                    err(error);
+                });
+            });
+
+            if (args && needsBody) {
+                httpsReq.setHeader('Content-Type', 'application/x-www-form-urlencoded');
+                httpsReq.write(queryString);
+            }
+
+            httpsReq.end();
+
+            httpsReq.on('error', function (e) {
+                err(e);
+            });
+
+
+
+}
+
+//**************** Start command line actions ****************
 function help() {
     console.log('Opening web page to show help.');
     spawn('open', ['https://github.com/jrburke/gitla/blob/master/README.md']);
@@ -80,16 +141,15 @@ function merge(args) {
  * Deletes the local and remote branches for a bug branch.
  */
 function del(args) {
-    //Delete the local branch
-
-    //Delete the remote branch
     var bugBranch = makeBugBranchName(args[0]);
 
+    //Delete the local branch
     exec('git branch -d ' + bugBranch, function (error, stdout, stderr) {
         if (error) {
             err('Cannot delete branch ' + bugBranch + ': ' + error);
         }
 
+        //Delete the remote branch
         exec('git push origin :' + bugBranch, function (error, stdout, stderr) {
             if (error) {
                 err('Cannot delete remote branch ' + bugBranch + ': ' + error);
@@ -98,6 +158,7 @@ function del(args) {
     });
 
 }
+//**************** End command line actions ****************
 
 /**
  * Routes the action to the right function based
@@ -131,12 +192,9 @@ if (!path.existsSync(configPath)) {
 config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
 
 //Validate the config file
-['gitHubOAuth'].forEach(function (prop) {
-    if (!config[prop]) {
-        console.log('Config file needs property: ' + prop);
-        spawn('open', ['https://github.com/login/oauth/authorize?client_id=' + oauthConfig.clientId]);
-    }
-});
+if (!config.gitHubOAuth) {
+    err('Config file needs property: ' + gitHubOAuth);
+}
 
 oauthConfig = config.gitHubOAuth;
 
@@ -202,7 +260,7 @@ if (!config.accessToken) {
     console.log('Waiting for OAuth dance to finish...');
 
     //Open the browser
-    spawn('open', ['https://github.com/login/oauth/authorize?client_id=' + oauthConfig.clientId]);
+    spawn('open', ['https://github.com/login/oauth/authorize?scope=public_repo&client_id=' + oauthConfig.clientId]);
 
 } else {
     route();
